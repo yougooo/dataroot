@@ -215,8 +215,7 @@ if __name__ == '__main__':
     SERVER_PORT = 8000
     if len(sys.argv) > 1:
         SERVER_PORT = sys.argv[1]
-    print(SERVER_PORT, len(sys.argv))
-    test = SimpleServer(('', SERVER_PORT))
+    test = SimpleServer(('', int(SERVER_PORT)))
     print('server ran at {}'.format(test.log_date_time_string()))
     test.run_server()
     webbrowser.open('localhost:{}'.format(test.server_port))
