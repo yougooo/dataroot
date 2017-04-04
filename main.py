@@ -7,17 +7,20 @@ import time
 import webbrowser
 import urllib.parse
 from http import HTTPStatus
+
+
 class SimpleServer:
 
-
     enc = sys.getfilesystemencoding()
-
     weekdayname = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
     monthname = [None,
                  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+    response_code = {'fine': "HTTP/1.1 200 OK\r\n", 'bad': "HTTP/1.1 404 Not Found\r\n",
+                          'redirect': "HTTP/1.1 302 Found\r\n"}
+    response_content_type = {'text': "Content-Type: text/html\n\n", 'image': 'Content-Type: image/png',
+                             'location': "Location: "}
 
     def __init__(self, server_address=('', 8000)):
         # Create socket and copy, with default value
@@ -29,8 +32,10 @@ class SimpleServer:
         host, port = self.server_socket.getsockname()[:2]
         self.server_name = socket.getfqdn(host)
         self.server_port = port
-        self.path = '.'
-        self.files_list = os.listdir(self.path)
+
+        self.files_list = os.listdir('.')
+        self.current_object = './'
+        self.current_url = '.'
         self.response_header = []
         self.start_header = """
                                     <!DOCTYPE html>\n
@@ -112,7 +117,7 @@ class SimpleServer:
                                     </html>\n
                                 """
 
-    def _log_date_time_string(self):
+    def log_date_time_string(self):
         """
         provided by source python library http.server
         Return the current time formatted for logging.
@@ -123,24 +128,30 @@ class SimpleServer:
                 day, self.monthname[month], year, hh, mm, ss)
         return s
 
-    """
-    def _get_response_header(self, key, val):
-        self.response_header.append(('{0}: {1}\r\n'.format(key, val)).encode('utf-8', 'strict'))
-    """
-    def _get_path(self, request):
+
+    def send_response_header(self, code_request, type_request):
+        self.response_header.append(code_request)
+        self.response_header.append(type_request)
+
+
+    def parse_reuest(self, request):
         """
         :param request: bytes object with socket info(received date)
         :return: str, file name from request
         """
         # find file name in request, regex way
-        pattern = re.compile(r'GET /?(.+) HTTP/1.1')
-        result = pattern.search(request.decode('utf-8'))
-        if result and result.group(1) == '/':
-            # dir with file main.py
-            self.path = '.'
-        elif result:
-            self.path = result.group(1)
-        return self.path
+        current_file = re.compile(r'GET /?(.+) HTTP/1.1')
+        path_search_result = current_file.search(request.decode('utf-8'))
+
+        if path_search_result and path_search_result.group(1) == '/':
+            self.current_url = './'
+        elif path_search_result:
+            self.current_object = path_search_result.group(1)
+        else:
+            self.send_response_header(self.response_code['bad'], self.response_content_type['text'])
+
+    def format_path(self, val):
+        return os.path.basename(self.current_object) + '/' + val
 
     def get_response(self):
         """
@@ -150,32 +161,45 @@ class SimpleServer:
             with open('index.html', 'rU') as f:
                 response = f.read()
             return response
-        file = self.path.split('/')[-1]
-        if os.path.isdir(self.path):
-            self.files_list = os.listdir(self.path)
-            response = ''.join('<tr><td><a  href="{}">{}</a></td></tr>'.format(file, file) for file in self.files_list)
+
+        if os.path.isdir(self.current_object):
+            self.files_list = os.listdir(self.current_object)
+            response = ''.join('<tr><td><a  href="{}">{}</a></td></tr>'.format(self.format_path(file), file)
+                               for file in self.files_list)
             return self.start_header + response + self.end_header
-        elif file in self.files_list:
-            with open(file, 'rU') as f:
-                response = f.read()
-            return response
+        elif os.path.exists(self.current_object):
+            try:
+                with open(self.current_object, 'rU') as f:
+                    response = f.read()
+                if self.current_object.split('.')[-1] == 'html':
+                    self.send_response_header(self.response_code['fine'],
+                                              self.response_content_type['text'])
+                return response
+
+            except UnicodeDecodeError:
+                if self.current_object.split('.')[-1] in ['png', 'jpeg', 'gif']:
+                    self.send_response_header(self.response_code['fine'],
+                                        self.response_content_type['image'])
+                return self.current_object
         else:
-            return b'404 Not Found'
+            self.send_response_header(self.response_code['bad'], self.response_content_type['text'])
+            return '404 Not Found'
 
     def send_response(self, client_socket):
         request = client_socket.recv(1024)
-        self.path = self._get_path(request)
+        self.parse_reuest(request)
         data = self.get_response()
-        encoded = b'HTTP/1.1 200 OK\r\n' + b'Content-Type: text/html\r\n\r\n' + \
-                  data.encode(self.enc, 'surrogateescape')
+        encoded = data.encode(self.enc, 'surrogateescape')
         f = io.BytesIO()
-        f.write(b"".join(self.response_header))
+        f.write("".join(self.response_header).encode())
         f.write(encoded)
         f.seek(0)
+        print('{} {} {}'.format('127.0.0.1', self.log_date_time_string(),
+                                self.response_header))
         client_socket.sendall(f.getvalue())
         self.response_header = []
 
-    def run(self):
+    def run_server(self):
         while True:
             client_socket, client_address = self.server_socket.accept()
             pid = os.fork()
@@ -186,7 +210,13 @@ class SimpleServer:
                 os._exit(0)
             else:
                 client_socket.close()
+
 if __name__ == '__main__':
-    test = SimpleServer(('', 8000))
-    test.run()
+    SERVER_PORT = 8000
+    if len(sys.argv) > 2:
+        SERVER_PORT = sys.argv[1]
+    print(SERVER_PORT, len(sys.argv))
+    test = SimpleServer(('', SERVER_PORT))
+    print('server ran at {}'.format(test.log_date_time_string()))
+    test.run_server()
     webbrowser.open('localhost:{}'.format(test.server_port))
