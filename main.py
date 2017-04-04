@@ -213,7 +213,7 @@ class SimpleServer:
 
 if __name__ == '__main__':
     SERVER_PORT = 8000
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 1:
         SERVER_PORT = sys.argv[1]
     print(SERVER_PORT, len(sys.argv))
     test = SimpleServer(('', SERVER_PORT))
