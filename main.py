@@ -157,15 +157,18 @@ class SimpleServer:
         """
         :return: data to client response
         """
+        """
         if 'index.html' in self.files_list:
             with open('index.html', 'rU') as f:
                 response = f.read()
             return response
+        """
 
         if os.path.isdir(self.current_object):
             self.files_list = os.listdir(self.current_object)
             response = ''.join('<tr><td><a  href="{}">{}</a></td></tr>'.format(self.format_path(file), file)
                                for file in self.files_list)
+            self.send_response_header(self.response_code['fine'], self.response_content_type['text'])
             return self.start_header + response + self.end_header
         elif os.path.exists(self.current_object):
             try:
@@ -212,7 +215,7 @@ class SimpleServer:
                 client_socket.close()
 
 if __name__ == '__main__':
-    SERVER_PORT = 8000
+    SERVER_PORT = 8010
     if len(sys.argv) > 1:
         SERVER_PORT = sys.argv[1]
     test = SimpleServer(('', int(SERVER_PORT)))
