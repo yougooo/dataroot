@@ -8,7 +8,6 @@ import webbrowser
 import urllib.parse
 from http import HTTPStatus
 
-
 class SimpleServer:
 
     enc = sys.getfilesystemencoding()
@@ -17,9 +16,15 @@ class SimpleServer:
                  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-    response_code = {'fine': "HTTP/1.1 200 OK\r\n", 'bad': "HTTP/1.1 404 Not Found\r\n",
-                          'redirect': "HTTP/1.1 302 Found\r\n"}
-    response_content_type = {'text': "Content-Type: text/html\n\n", 'image': 'Content-Type: image/png',
+    response_code = {'fine': "HTTP/1.1 200 OK\r\n",
+                     'bad': "HTTP/1.1 404 Not Found\r\n",
+                     'redirect': "HTTP/1.1 302 Found\r\n"}
+
+    response_content_type = {'html': "Content-Type: text/html\n\n",
+                             'xml': "Content-Type: text/xml\n\n",
+                             'text': "Content-Type: text/plain\n\n",
+                             'image': 'Content-Type: image/{}\n\n',
+                             'pdf': 'Content-Type: application/pdf\n\n',
                              'location': "Location: "}
 
     def __init__(self, server_address=('', 8000)):
@@ -37,7 +42,7 @@ class SimpleServer:
         self.current_object = './'
         self.current_url = '.'
         self.response_header = []
-        self.start_header = """
+        self.start_header = b"""
                                     <!DOCTYPE html>\n
                                     <html lang="en">\n
                                     <head>\n
@@ -108,7 +113,7 @@ class SimpleServer:
                                     <thead><tr><td>Header</td></tr></thead>
                                     <tbody>
                                     """
-        self.end_header = """
+        self.end_header = b"""
                                     </tbody>
 
                                     </table></div>\n
@@ -130,16 +135,16 @@ class SimpleServer:
 
 
     def send_response_header(self, code_request, type_request):
+        self.response_header = []
         self.response_header.append(code_request)
         self.response_header.append(type_request)
 
 
-    def parse_reuest(self, request):
+    def parse_request(self, request):
         """
         :param request: bytes object with socket info(received date)
         :return: str, file name from request
         """
-        # find file name in request, regex way
         current_file = re.compile(r'GET /?(.+) HTTP/1.1')
         path_search_result = current_file.search(request.decode('utf-8'))
 
@@ -148,58 +153,71 @@ class SimpleServer:
         elif path_search_result:
             self.current_object = path_search_result.group(1)
         else:
-            self.send_response_header(self.response_code['bad'], self.response_content_type['text'])
+            self.send_response_header(self.response_code['bad'],
+                                      self.response_content_type['html'])
 
     def format_path(self, val):
         return os.path.basename(self.current_object) + '/' + val
+
+    def detect_type_response(self):
+        file_type = self.current_object.split('.')[-1]
+        if file_type in self.response_content_type.keys():
+            self.send_response_header(self.response_code['fine'],
+                                      self.response_content_type[file_type])
+        elif file_type in ['png', 'jpeg', 'gif']:
+            self.send_response_header(self.response_code['fine'],
+                                      self.response_content_type['image'].format(file_type))
+        elif file_type in ['py', 'txt']:
+            self.send_response_header(self.response_code['fine'],
+                                      self.response_content_type['text'])
+        elif file_type == 'pdf':
+            self.send_response_header(self.response_code['fine'],
+                                      self.response_content_type['pdf'])
+            self.response_header.append('Content-Disposition: attachment; filename={}'.format(self.current_object))
+        else:
+            self.response_header.append(self.response_code['fine'])
+            self.response_header.append('Content-Disposition: attachment; filename={}'.format(self.current_object.split('/')[-1]))
+            return True
 
     def get_response(self):
         """
         :return: data to client response
         """
-        """
-        if 'index.html' in self.files_list:
-            with open('index.html', 'rU') as f:
-                response = f.read()
-            return response
-        """
-
         if os.path.isdir(self.current_object):
             self.files_list = os.listdir(self.current_object)
             response = ''.join('<tr><td><a  href="{}">{}</a></td></tr>'.format(self.format_path(file), file)
                                for file in self.files_list)
-            self.send_response_header(self.response_code['fine'], self.response_content_type['text'])
-            return self.start_header + response + self.end_header
-        elif os.path.exists(self.current_object):
-            try:
-                with open(self.current_object, 'rU') as f:
+            self.send_response_header(self.response_code['fine'], self.response_content_type['html'])
+            if 'index.html' in self.files_list:
+                with open(self.current_object + '/' + 'index.html', 'rb') as f:
                     response = f.read()
-                if self.current_object.split('.')[-1] == 'html':
-                    self.send_response_header(self.response_code['fine'],
-                                              self.response_content_type['text'])
+                return response
+            return self.start_header + response.encode() + self.end_header
+        elif os.path.exists(self.current_object):
+            if not self.detect_type_response():
+                with open(self.current_object, 'rb') as f:
+                    response = f.read()
                 return response
 
-            except UnicodeDecodeError:
-                if self.current_object.split('.')[-1] in ['png', 'jpeg', 'gif']:
-                    self.send_response_header(self.response_code['fine'],
-                                        self.response_content_type['image'])
-                return self.current_object
         else:
-            self.send_response_header(self.response_code['bad'], self.response_content_type['text'])
+            self.send_response_header(self.response_code['bad'], self.response_content_type['html'])
             return '404 Not Found'
 
     def send_response(self, client_socket):
         request = client_socket.recv(1024)
-        self.parse_reuest(request)
+        self.parse_request(request)
         data = self.get_response()
-        encoded = data.encode(self.enc, 'surrogateescape')
         f = io.BytesIO()
         f.write("".join(self.response_header).encode())
-        f.write(encoded)
+        if data:
+            f.write(data)
+            client_socket.send(f.getvalue())
+        else:
+            client_socket.send(f.getvalue())
+            client_socket.sendfile(open(self.current_object, 'rb'))
         f.seek(0)
         print('{} {} {}'.format('127.0.0.1', self.log_date_time_string(),
                                 self.response_header))
-        client_socket.sendall(f.getvalue())
         self.response_header = []
 
     def run_server(self):
@@ -215,10 +233,10 @@ class SimpleServer:
                 client_socket.close()
 
 if __name__ == '__main__':
-    SERVER_PORT = 8010
+    SERVER_PORT = 8000
     if len(sys.argv) > 1:
         SERVER_PORT = sys.argv[1]
     test = SimpleServer(('', int(SERVER_PORT)))
-    print('server ran at {}'.format(test.log_date_time_string()))
+    print('start server on localhost:{}  at {}'.format(str(SERVER_PORT), test.log_date_time_string()))
     test.run_server()
     webbrowser.open('localhost:{}'.format(test.server_port))
